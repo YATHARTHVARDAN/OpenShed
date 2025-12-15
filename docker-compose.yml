@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # 1. The Database (Postgres)
+  db:
+    image: postgres:15-alpine
+    container_name: openshed_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=openshed_user
+      - POSTGRES_PASSWORD=openshed_password
+      - POSTGRES_DB=openshed_db
+    ports:
+      - "5432:5432"
+    networks:
+      - openshed_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openshed_user -d openshed_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. The Cache/Lock Manager (Redis)
+  redis:
+    image: redis:7-alpine
+    container_name: openshed_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - openshed_net
+
+  # 3. The Backend (FastAPI)
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: openshed_backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app  # Syncs your local folder to the container (Hot Reload)
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://openshed_user:openshed_password@db:5432/openshed_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - openshed_net
+
+  # 4. Database GUI (PgAdmin) - Optional but super helpful
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: openshed_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@openshed.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+    networks:
+      - openshed_net
+
+# Define the network so services can talk to each other
+networks:
+  openshed_net:
+    driver: bridge
+
+# Define persistent storage
+volumes:
+  postgres_data:
